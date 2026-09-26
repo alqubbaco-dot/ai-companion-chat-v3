@@ -1,3 +1,4 @@
+
 import {
   createContext,
   useCallback,
@@ -160,6 +161,7 @@ export function FriendsProvider({ children }: { children: ReactNode }) {
 
     const key = profileKey(user.id);
     const localProfile = readStored<Profile>(key, DEFAULT_PROFILE);
+    const legacyProfile = readStored<Partial<Profile> | null>("profile", null);
     const { data: cloudProfile, error: profileError } = await supabase
       .from("users_directory")
       .select("id,name,handle,phone")
@@ -179,7 +181,28 @@ export function FriendsProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    setProfile(localProfile.id === user.id ? localProfile : DEFAULT_PROFILE);
+    if (localProfile.id === user.id) {
+      setProfile(localProfile);
+      return;
+    }
+
+    const legacyEmail = legacyProfile?.phone?.trim().toLowerCase();
+    const userEmail = user.email?.trim().toLowerCase();
+    if (legacyProfile && userEmail && legacyEmail === userEmail) {
+      const restoredProfile: Profile = {
+        id: user.id,
+        name: legacyProfile.name || "",
+        handle: legacyProfile.handle || "",
+        bio: legacyProfile.bio || "",
+        phone: legacyProfile.phone || "",
+      };
+      writeStored(key, restoredProfile);
+      const savedProfile = readStored<Profile>(key, DEFAULT_PROFILE);
+      setProfile(savedProfile.id === user.id ? savedProfile : restoredProfile);
+      return;
+    }
+
+    setProfile(DEFAULT_PROFILE);
   }, []);
 
   useEffect(() => {
