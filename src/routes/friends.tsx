@@ -5,7 +5,7 @@ import { PageBody } from "@/components/app/AppShell";
 import { PersonRow, RowButton } from "@/components/friends/PersonRow";
 import { useFriends } from "@/lib/friends-store";
 import { useI18n } from "@/lib/i18n";
-import { searchCloudUsers, sendFriendRequest, type CloudUser } from "@/lib/cloud-friends";
+import { searchCloudUsers, type CloudUser } from "@/lib/cloud-friends";
 
 export const Route = createFileRoute("/friends")({
   head: () => ({
@@ -36,6 +36,7 @@ function FriendsPage() {
     friends,
     blocked,
     relationOf,
+    sendRequest,
     cancelRequest,
     removeFriend,
     blockUser,
@@ -53,8 +54,7 @@ function FriendsPage() {
       setIsSearching(true);
       try {
         // مطابقة الهوية الصافية برقم الهاتف المباشر المتوافق مع دالة الدخول الفوري الجديدة
-        const currentUserId = profile.phone ? "u_" + profile.phone.trim() : "u_user";
-        const res = await searchCloudUsers(q, currentUserId);
+        const res = await searchCloudUsers(q, profile.id);
         setCloudResults(res);
       } catch (err) {
         console.error("خطأ في جلب نتائج البحث السحابي:", err);
@@ -75,11 +75,11 @@ function FriendsPage() {
   };
 
   const handleSendCloudRequest = async (targetId: string, targetName: string) => {
-    const currentUserId = profile.phone ? "u_" + profile.phone.trim() : "u_user";
-    const success = await sendFriendRequest(currentUserId, targetId);
-    if (success) {
+    try {
+      await sendRequest(targetId);
       toast.success(`🚀 ${t("requestSent")} بنجاح إلى ${targetName} عبر السحاب!`);
-    } else {
+    } catch (error) {
+      console.error("فشل إرسال طلب الصداقة السحابي:", error);
       toast.error("فشل إرسال طلب الصداقة السحابي، يرجى إعادة المحاولة.");
     }
   };

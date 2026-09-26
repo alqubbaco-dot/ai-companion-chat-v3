@@ -28,6 +28,7 @@ export type Person = {
 export type Relation = "none" | "friend" | "incoming" | "outgoing" | "blocked";
 
 export type Profile = {
+  id: string;
   name: string;
   handle: string;
   bio: string;
@@ -41,6 +42,19 @@ type Relations = {
   blocked: string[];
 };
 
+type CloudUserRow = {
+  id: string;
+  name: string;
+  name_en?: string | null;
+  handle: string;
+  role: string;
+  role_en: string;
+  status: UserStatus;
+  last_seen_minutes?: number | null;
+  accent?: Person["accent"];
+  phone?: string | null;
+};
+
 const DEFAULT_RELATIONS: Relations = {
   friends: [],
   incoming: [],
@@ -49,6 +63,7 @@ const DEFAULT_RELATIONS: Relations = {
 };
 
 const DEFAULT_PROFILE: Profile = {
+  id: "",
   name: "",
   handle: "",
   bio: "",
@@ -65,21 +80,20 @@ type FriendsValue = {
   blocked: Person[];
   relationOf: (id: string) => Relation;
   searchUsers: (query: string) => Person[];
-  sendRequest: (id: string) => void;
-  cancelRequest: (id: string) => void;
-  acceptRequest: (id: string) => void;
-  rejectRequest: (id: string) => void;
-  removeFriend: (id: string) => void;
-  blockUser: (id: string) => void;
-  unblockUser: (id: string) => void;
+  sendRequest: (id: string) => Promise<void>;
+  cancelRequest: (id: string) => Promise<void>;
+  acceptRequest: (id: string) => Promise<void>;
+  rejectRequest: (id: string) => Promise<void>;
+  removeFriend: (id: string) => Promise<void>;
+  blockUser: (id: string) => Promise<void>;
+  unblockUser: (id: string) => Promise<void>;
   updateProfile: (profile: Profile) => void;
   resetAll: () => void;
-  registerUserWithPhone: (name: string, phone: string) => Promise<void>;
+  refreshProfile: () => Promise<void>;
 };
 
 const FriendsContext = createContext<FriendsValue | null>(null);
-const REL_KEY = "relations";
-const PROFILE_KEY = "profile";
+const profileKey = (userId: string) => `profile:${userId}`;
 
 export function useFriends(): FriendsValue {
   const ctx = useContext(FriendsContext);
@@ -93,11 +107,30 @@ export function FriendsProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile>(DEFAULT_PROFILE);
   const [hydrated, setHydrated] = useState(false);
 
+  const refreshRelations = useCallback(async (userId: string) => {
+    const { data, error } = await supabase
+      .from("friendships")
+      .select("sender_id,receiver_id,status")
+      .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`);
+
+    if (error || !data) return;
+
+    const next: Relations = { friends: [], incoming: [], outgoing: [], blocked: [] };
+    for (const relation of data) {
+      const otherId = relation.sender_id === userId ? relation.receiver_id : relation.sender_id;
+      if (relation.status === "accepted") next.friends.push(otherId);
+      if (relation.status === "blocked") next.blocked.push(otherId);
+      if (relation.status === "pending" && relation.receiver_id === userId) next.incoming.push(otherId);
+      if (relation.status === "pending" && relation.sender_id === userId) next.outgoing.push(otherId);
+    }
+    setRelations(next);
+  }, []);
+
   const fetchCloudUsers = useCallback(async () => {
     try {
       const { data, error } = await supabase.from("users_directory").select("*");
       if (!error && data) {
-        const mappedData = data.map((item: any) => ({
+        const mappedData = data.map((item: CloudUserRow) => ({
           id: item.id,
           name: item.name,
           nameEn: item.name_en || item.name,
@@ -116,18 +149,48 @@ export function FriendsProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  useEffect(() => {
-    const localProf = readStored<Profile>(PROFILE_KEY, DEFAULT_PROFILE);
-    setRelations(readStored<Relations>(REL_KEY, DEFAULT_RELATIONS));
-    
-    if (localProf && localProf.phone && localProf.phone.trim() !== "") {
-      setProfile(localProf);
-    } else {
+  const refreshProfile = useCallback(async () => {
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    const user = authData.user;
+
+    if (authError || !user) {
       setProfile(DEFAULT_PROFILE);
+      return;
     }
-    
-    fetchCloudUsers();
-    setHydrated(true);
+
+    const key = profileKey(user.id);
+    const localProfile = readStored<Profile>(key, DEFAULT_PROFILE);
+    const { data: cloudProfile, error: profileError } = await supabase
+      .from("users_directory")
+      .select("id,name,handle,phone")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (!profileError && cloudProfile) {
+      const nextProfile: Profile = {
+        id: user.id,
+        name: cloudProfile.name || "",
+        handle: cloudProfile.handle || "",
+        bio: localProfile.id === user.id ? localProfile.bio : "",
+        phone: cloudProfile.phone || user.email || "",
+      };
+      setProfile(nextProfile);
+      writeStored(key, nextProfile);
+      return;
+    }
+
+    setProfile(localProfile.id === user.id ? localProfile : DEFAULT_PROFILE);
+  }, []);
+
+  useEffect(() => {
+    void supabase.auth.getUser().then(({ data }) => {
+      const userId = data.user?.id;
+      return Promise.all([
+        refreshProfile(),
+        fetchCloudUsers(),
+        userId ? refreshRelations(userId) : Promise.resolve(),
+      ]);
+    }).finally(() => setHydrated(true));
 
     const channel = supabase
       .channel("schema-db-changes")
@@ -136,43 +199,104 @@ export function FriendsProvider({ children }: { children: ReactNode }) {
       })
       .subscribe();
 
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        void Promise.all([
+          refreshProfile(),
+          refreshRelations(session.user.id),
+          fetchCloudUsers(),
+        ]);
+      } else {
+        setProfile(DEFAULT_PROFILE);
+        setRelations(DEFAULT_RELATIONS);
+      }
+    });
+
     return () => {
       supabase.removeChannel(channel);
+      authListener.subscription.unsubscribe();
     };
-  }, [fetchCloudUsers]);
+  }, [fetchCloudUsers, refreshProfile, refreshRelations]);
 
-  const registerUserWithPhone = useCallback(async (name: string, phone: string) => {
-    const cleanPhone = phone.trim();
-    const cleanName = name.trim();
-    const generatedId = "u_" + cleanPhone;
-    const generatedHandle = "@" + cleanName.toLowerCase().replace(/\s+/g, "_") + "_" + cleanPhone.slice(-3);
+  const sendRequest = useCallback(async (id: string) => {
+    const { data } = await supabase.auth.getUser();
+    if (!data.user || data.user.id === id) return;
+    const { error } = await supabase.from("friendships").insert({
+      sender_id: data.user.id,
+      receiver_id: id,
+      status: "pending",
+    });
+    if (error) throw error;
+    await refreshRelations(data.user.id);
+  }, [refreshRelations]);
 
-    const nextProfile: Profile = {
-      name: cleanName,
-      handle: generatedHandle,
-      bio: "متصل الآن من هاتف حقيقي.",
-      phone: cleanPhone
-    };
-    
-    setProfile(nextProfile);
-    writeStored(PROFILE_KEY, nextProfile);
-    await fetchCloudUsers();
-  }, [fetchCloudUsers]);
+  const cancelRequest = useCallback(async (id: string) => {
+    const { data } = await supabase.auth.getUser();
+    if (!data.user) return;
+    await supabase
+      .from("friendships")
+      .delete()
+      .eq("sender_id", data.user.id)
+      .eq("receiver_id", id)
+      .eq("status", "pending");
+    await refreshRelations(data.user.id);
+  }, [refreshRelations]);
 
-  const update = useCallback((next: Relations) => {
-    setRelations(next);
-    writeStored(REL_KEY, next);
-  }, []);
+  const acceptRequest = useCallback(async (id: string) => {
+    const { data } = await supabase.auth.getUser();
+    if (!data.user) return;
+    await supabase
+      .from("friendships")
+      .update({ status: "accepted" })
+      .eq("sender_id", id)
+      .eq("receiver_id", data.user.id)
+      .eq("status", "pending");
+    await refreshRelations(data.user.id);
+  }, [refreshRelations]);
 
-  const detach = useCallback(
-    (state: Relations, id: string): Relations => ({
-      friends: state.friends.filter((x) => x !== id),
-      incoming: state.incoming.filter((x) => x !== id),
-      outgoing: state.outgoing.filter((x) => x !== id),
-      blocked: state.blocked.filter((x) => x !== id),
-    }),
-    [],
-  );
+  const rejectRequest = useCallback(async (id: string) => {
+    const { data } = await supabase.auth.getUser();
+    if (!data.user) return;
+    await supabase
+      .from("friendships")
+      .delete()
+      .eq("sender_id", id)
+      .eq("receiver_id", data.user.id)
+      .eq("status", "pending");
+    await refreshRelations(data.user.id);
+  }, [refreshRelations]);
+
+  const removeFriend = useCallback(async (id: string) => {
+    const { data } = await supabase.auth.getUser();
+    if (!data.user) return;
+    await supabase
+      .from("friendships")
+      .delete()
+      .or(`and(sender_id.eq.${data.user.id},receiver_id.eq.${id}),and(sender_id.eq.${id},receiver_id.eq.${data.user.id})`)
+      .eq("status", "accepted");
+    await refreshRelations(data.user.id);
+  }, [refreshRelations]);
+
+  const blockUser = useCallback(async (id: string) => {
+    const { data } = await supabase.auth.getUser();
+    if (!data.user) return;
+    await supabase
+      .from("friendships")
+      .upsert({ sender_id: data.user.id, receiver_id: id, status: "blocked" });
+    await refreshRelations(data.user.id);
+  }, [refreshRelations]);
+
+  const unblockUser = useCallback(async (id: string) => {
+    const { data } = await supabase.auth.getUser();
+    if (!data.user) return;
+    await supabase
+      .from("friendships")
+      .delete()
+      .eq("sender_id", data.user.id)
+      .eq("receiver_id", id)
+      .eq("status", "blocked");
+    await refreshRelations(data.user.id);
+  }, [refreshRelations]);
 
   const byIds = useCallback(
     (ids: string[]) =>
@@ -214,34 +338,25 @@ export function FriendsProvider({ children }: { children: ReactNode }) {
             (p.phone && p.phone.includes(q))
         );
       },
-      sendRequest: (id) => {
-        const base = detach(relations, id);
-        update({ ...base, outgoing: [...base.outgoing, id] });
-      },
-      cancelRequest: (id) => update(detach(relations, id)),
-      acceptRequest: (id) => {
-        const base = detach(relations, id);
-        update({ ...base, friends: [...base.friends, id] });
-      },
-      rejectRequest: (id) => update(detach(relations, id)),
-      removeFriend: (id) => update(detach(relations, id)),
-      blockUser: (id) => {
-        const base = detach(relations, id);
-        update({ ...base, blocked: [...base.blocked, id] });
-      },
-      unblockUser: (id) => update(detach(relations, id)),
+      sendRequest,
+      cancelRequest,
+      acceptRequest,
+      rejectRequest,
+      removeFriend,
+      blockUser,
+      unblockUser,
       updateProfile: (next) => {
         setProfile(next);
-        writeStored(PROFILE_KEY, next);
+        if (next.id) writeStored(profileKey(next.id), next);
       },
       resetAll: () => {
         update(DEFAULT_RELATIONS);
         setProfile(DEFAULT_PROFILE);
-        writeStored(PROFILE_KEY, DEFAULT_PROFILE);
+        if (profile.id) writeStored(profileKey(profile.id), DEFAULT_PROFILE);
       },
-      registerUserWithPhone
+      refreshProfile
     };
-  }, [hydrated, directory, profile, relations, byIds, relationOf, detach, update, registerUserWithPhone]);
+  }, [hydrated, directory, profile, relations, byIds, relationOf, sendRequest, cancelRequest, acceptRequest, rejectRequest, removeFriend, blockUser, unblockUser, refreshProfile]);
 
   return <FriendsContext.Provider value={value}>{children}</FriendsContext.Provider>;
 }

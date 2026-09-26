@@ -11,6 +11,7 @@ import {
 import { createId, readStored, writeStored } from "./storage";
 import { streamSimulatedReply, titleFromPrompt } from "./simulated-ai";
 import { useI18n } from "./i18n";
+import { supabase } from "./supabase";
 
 export type ChatRole = "user" | "assistant";
 
@@ -48,18 +49,37 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const { lang } = useI18n();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [hydrated, setHydrated] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
   const [streamingId, setStreamingId] = useState<string | null>(null);
   const cancelRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    setConversations(readStored<Conversation[]>(KEY, []));
-    setHydrated(true);
+    let active = true;
+
+    const loadForUser = async (nextUserId: string | null) => {
+      if (!active) return;
+      setUserId(nextUserId);
+      setConversations(
+        nextUserId ? readStored<Conversation[]>(`${KEY}:${nextUserId}`, []) : [],
+      );
+      setHydrated(true);
+    };
+
+    void supabase.auth.getUser().then(({ data }) => loadForUser(data.user?.id || null));
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      void loadForUser(session?.user.id || null);
+    });
+
+    return () => {
+      active = false;
+      authListener.subscription.unsubscribe();
+    };
   }, []);
 
   const persist = useCallback((next: Conversation[]) => {
-    writeStored(KEY, next);
+    if (userId) writeStored(`${KEY}:${userId}`, next);
     return next;
-  }, []);
+  }, [userId]);
 
   const createConversation = useCallback((): Conversation => {
     const conversation: Conversation = {

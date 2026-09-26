@@ -19,20 +19,19 @@ export async function searchCloudUsers(query: string, currentUserId: string): Pr
 
   try {
     // جلب الحسابات المتطابقة مع استثناء حساب المستخدم الحالي لمنع إرسال طلب لنفسه
-    const { data, error } = await supabase
+    let request = supabase
       .from("users_directory")
       .select("id, name, handle, phone, status")
-      .not("id", "eq", currentUserId);
+      .or(`name.ilike.%${q}%,phone.ilike.%${q}%`);
+
+    if (currentUserId) request = request.neq("id", currentUserId);
+
+    const { data, error } = await request;
 
     if (error) throw error;
     if (!data) return [];
 
-    // تصفية حية ذكية للبحث بالاسم أو رقم الهاتف بنقاء كامل
-    return (data as CloudUser[]).filter(
-      (user) =>
-        user.name.toLowerCase().includes(q.toLowerCase()) ||
-        (user.phone && user.phone.includes(q))
-    );
+    return data as CloudUser[];
   } catch (err) {
     console.error("خطأ أثناء محرك البحث السحابي الموحد:", err);
     return [];

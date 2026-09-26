@@ -11,7 +11,7 @@ export const Route = createFileRoute("/login")({
 type LoginMode = "signup" | "signin";
 
 function LoginPage() {
-  const { registerUserWithPhone } = useFriends();
+  const { refreshProfile } = useFriends();
   const router = useRouter();
   
   const [mode, setMode] = useState<LoginMode>("signup");
@@ -45,7 +45,8 @@ function LoginPage() {
     setIsSubmitting(true);
     
     try {
-      const finalName = mode === "signup" ? cleanName : "مستخدم عائد";
+      const finalName = cleanName;
+      let authUserId = "";
       
       if (mode === "signup") {
         // 🟢 1. حفر ومصادقة الحساب الشرعي داخل نظام أمان Supabase Auth (Emails)
@@ -60,7 +61,8 @@ function LoginPage() {
           return;
         }
 
-        if (authData?.user) {
+          authUserId = authData.user?.id || "";
+          if (authData.user) {
           const generatedHandle = "@" + finalName.toLowerCase().replace(/\s+/g, "_") + "_" + cleanEmail.split('@')[0].slice(-3);
           
           const cloudPayload = {
@@ -81,13 +83,15 @@ function LoginPage() {
             .from("users_directory")
             .insert([cloudPayload]);
 
-          if (dbError) {
-            console.warn("تنبيه الحظر السحابي أثناء الإدراج:", dbError.message);
-          }
+            if (dbError) {
+              toast.error(`تعذر حفظ ملف الحساب: ${dbError.message}`);
+              setIsSubmitting(false);
+              return;
+            }
         }
       } else {
         // 🔐 في حالة تسجيل دخول مسجل قديم، المطابقة والعبور الصارم بالإيميل والرمز
-        const { error: signInError } = await supabase.auth.signInWithPassword({
+        const { data: authData, error: signInError } = await supabase.auth.signInWithPassword({
           email: cleanEmail,
           password: cleanPassword,
         });
@@ -97,10 +101,17 @@ function LoginPage() {
           setIsSubmitting(false);
           return;
         }
+
+        authUserId = authData.user?.id || "";
       }
 
-      // تمرير الاسم للمخزن المحلي لتشغيل غرف الدردشة
-      await registerUserWithPhone(finalName, cleanEmail);
+      if (!authUserId) {
+        toast.error("تعذر تحديد هوية الحساب الحالي.");
+        setIsSubmitting(false);
+        return;
+      }
+
+      await refreshProfile();
       
       if (mode === "signup") {
         toast.success(`🟢 تم إنشاء الهوية وتفعيل الدخول بالإيميل بنجاح.`);
@@ -110,11 +121,9 @@ function LoginPage() {
       
       router.navigate({ to: "/" });
 
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("خطأ أثناء معالجة الهوية السحابية والمحلية:", err);
-      const finalName = mode === "signup" ? cleanName : "مستخدم عائد";
-      await registerUserWithPhone(finalName, cleanEmail);
-      router.navigate({ to: "/" });
+      toast.error("تعذر تحميل بيانات الحساب الحالي.");
     } finally {
       setIsSubmitting(false);
     }
@@ -165,7 +174,7 @@ function LoginPage() {
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="مثال: جبار حسن محمود"
+                placeholder="مثال: الاسم الثلاثي"
                 className="w-full rounded-xl border-2 border-line bg-paper px-3 py-1.5 text-sm outline-none focus:border-teal"
               />
             </div>

@@ -4,6 +4,7 @@ import type { Person } from "@/lib/friends-store";
 import { useI18n } from "@/lib/i18n";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
+import { getOrCreatePrivateConversation } from "@/lib/private-chat";
 
 const accentBg: Record<Person["accent"], string> = {
   teal: "bg-teal/20",
@@ -29,12 +30,14 @@ export function PersonRow({
   const isOnline = person.status === "online";
 
   // دالة الضغط الذكية لفتح شاشة المراسلة فوراً بالاسم والصورة مثل الواتساب
-  const handleCardClick = () => {
-    navigate({ 
-      to: "/chats",
-      search: { friendId: person.id }
-    });
-    toast.success(`جاري فتح محادثة مخصصة مع ${name}`);
+  const handleCardClick = async () => {
+    try {
+      const conversationId = await getOrCreatePrivateConversation(person.id);
+      navigate({ to: "/private-chat/$conversationId", params: { conversationId } });
+    } catch (error) {
+      console.error("تعذر فتح المحادثة الخاصة:", error);
+      toast.error("لا يمكن فتح محادثة إلا مع صديق مقبول فعلياً.");
+    }
   };
 
   return (

@@ -17,6 +17,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as RequestsRouteImport } from './routes/requests'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as ChatChatIdRouteImport } from './routes/chat.$chatId'
+import { Route as PrivateChatConversationIdRouteImport } from './routes/private-chat.$conversationId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -58,6 +59,12 @@ const ChatChatIdRoute = ChatChatIdRouteImport.update({
   path: '/chat/$chatId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PrivateChatConversationIdRoute =
+  PrivateChatConversationIdRouteImport.update({
+    id: '/private-chat/$conversationId',
+    path: '/private-chat/$conversationId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -68,6 +75,7 @@ export interface FileRoutesByFullPath {
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
   '/chat/$chatId': typeof ChatChatIdRoute
+  '/private-chat/$conversationId': typeof PrivateChatConversationIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -78,6 +86,7 @@ export interface FileRoutesByTo {
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
   '/chat/$chatId': typeof ChatChatIdRoute
+  '/private-chat/$conversationId': typeof PrivateChatConversationIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -89,6 +98,7 @@ export interface FileRoutesById {
   '/requests': typeof RequestsRoute
   '/settings': typeof SettingsRoute
   '/chat/$chatId': typeof ChatChatIdRoute
+  '/private-chat/$conversationId': typeof PrivateChatConversationIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -101,6 +111,7 @@ export interface FileRouteTypes {
     | '/requests'
     | '/settings'
     | '/chat/$chatId'
+    | '/private-chat/$conversationId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -111,6 +122,7 @@ export interface FileRouteTypes {
     | '/requests'
     | '/settings'
     | '/chat/$chatId'
+    | '/private-chat/$conversationId'
   id:
     | '__root__'
     | '/'
@@ -121,6 +133,7 @@ export interface FileRouteTypes {
     | '/requests'
     | '/settings'
     | '/chat/$chatId'
+    | '/private-chat/$conversationId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -132,6 +145,7 @@ export interface RootRouteChildren {
   RequestsRoute: typeof RequestsRoute
   SettingsRoute: typeof SettingsRoute
   ChatChatIdRoute: typeof ChatChatIdRoute
+  PrivateChatConversationIdRoute: typeof PrivateChatConversationIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -192,6 +206,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatChatIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/private-chat/$conversationId': {
+      id: '/private-chat/$conversationId'
+      path: '/private-chat/$conversationId'
+      fullPath: '/private-chat/$conversationId'
+      preLoaderRoute: typeof PrivateChatConversationIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -204,6 +225,7 @@ const rootRouteChildren: RootRouteChildren = {
   RequestsRoute: RequestsRoute,
   SettingsRoute: SettingsRoute,
   ChatChatIdRoute: ChatChatIdRoute,
+  PrivateChatConversationIdRoute: PrivateChatConversationIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
